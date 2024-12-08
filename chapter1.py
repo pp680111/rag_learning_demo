@@ -10,7 +10,7 @@ import os
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 qwen_model = "qwen-turbo"
-qwen_api_key = "sk-cb061839ce3c489886dbaac15b46396d"
+qwen_api_key = ""
 
 def load_embedding_model():
     print(f"加载Embedding模型中")
