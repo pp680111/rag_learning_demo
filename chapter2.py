@@ -1,12 +1,14 @@
-from langchain_community.document_loaders import PyPDFLoader
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from sentence_transformers import SentenceTransformer
-import faiss
-import numpy as np
-import dashscope
+import os
 from http import HTTPStatus
 
-import os
+import dashscope
+import faiss
+import numpy as np
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from sentence_transformers import SentenceTransformer
+
+from langchain_base_document_loader import load_document
+
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 qwen_model = "qwen-turbo"
@@ -18,33 +20,50 @@ def load_embedding_model():
     print(f"bge-small-zh-v1.5模型最大输入长度:{embedding_model.max_seq_length}")
     return embedding_model
 
-def indexing_process(pdf_file, empbedding_model):
-    pdf_loader = PyPDFLoader(pdf_file, extract_images=False)
+def scan_document_folder(document_folder):
+    documents = []
 
+    for file_name in os.listdir(document_folder):
+        file_path = os.path.join(document_folder, file_name)
+
+        # 递归扫描文件
+        if os.path.isdir(file_path):
+            documents.extend(scan_document_folder(file_path))
+            continue
+
+        elif not os.path.isfile(file_path):
+            continue
+
+        print(f"加载文件 {file_path}")
+
+        try:
+            documents.append(load_document(file_path))
+        except ValueError as e:
+            print(f"文件 {file_path} 跳过，错误信息：{e}")
+
+    return documents
+
+def indexing_process(documents, empbedding_model):
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=512, chunk_overlap=128)
 
-    pdf_content_list = pdf_loader.load()
-    pdf_text = "\n".join([pdf_content.page_content for pdf_content in pdf_content_list])
-    print(f"PDF总字符数：{len(pdf_text)}")
-
-    chunks = text_splitter.split_text(pdf_text)
-    print(f"PDF文本分片数：{len(chunks)}")
-
     embeddings = []
-    for chunk in chunks:
-        embedding = empbedding_model.encode(chunk)
-        embeddings.append(embedding)
+    all_chunks = []
 
-    print("已完成文本的向量化")
+    for document in documents:
+        chunks = text_splitter.split_text(document)
+        all_chunks.extend(chunks)
+
+        for chunk in chunks:
+            embedding = empbedding_model.encode(chunk)
+            embeddings.append(embedding)
 
     embeddings_np = np.array(embeddings)
-
     dimension = embeddings_np.shape[1]
 
     index = faiss.IndexFlatIP(dimension)
     index.add(embeddings_np)
 
-    return index, chunks
+    return index, all_chunks
 
 
 def retrieval_process(query, index, chunks, embedding_model, top_k=3):
@@ -111,16 +130,22 @@ def generate_process(query, chunks):
 def main():
     print("RAG过程开始.")
 
+    global qwen_api_key
     qwen_api_key = os.getenv("qwen_key")
     if qwen_api_key is None:
         print("请设置qwen_key环境变量")
         return
 
-    query="下面报告中涉及了哪几个行业的案例以及总结各自面临的挑战？"
+    query="怎么查看当前系统中的所有pv"
     embedding_model = load_embedding_model()
 
+    documents = scan_document_folder('E:/Document/笔记整理/linux')
+    if len(documents) == 0:
+        print("没有需要处理的文件")
+        return
+
     # 索引流程：加载PDF文件，分割文本块，计算嵌入向量，存储在FAISS向量库中（内存）
-    index, chunks = indexing_process('test_lesson2.pdf', embedding_model)
+    index, chunks = indexing_process(documents, embedding_model)
 
     # 检索流程：将用户查询转化为嵌入向量，检索最相似的文本块
     retrieval_chunks = retrieval_process(query, index, chunks, embedding_model)
