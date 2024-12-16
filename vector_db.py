@@ -60,3 +60,6 @@ def retrieval_process(query, embedding_model=None, top_k = 6):
         retrieved_chunks.append(doc)
 
     return retrieved_chunks
+
+def get_documents():
+    return _collection.get()['documents']
